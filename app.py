@@ -555,7 +555,9 @@ async def run_agent(query):
         return StreamingResponse(stream_response_generator(), media_type="text/plain")
     
     return output
-    
+
+def run_uvicorn():
+    uvicorn.run(app, host="0.0.0.0", port=7860, log_level="info")
 
 @app.get("/health")
 async def health_check():
@@ -564,9 +566,9 @@ async def health_check():
         async with httpx.AsyncClient() as client:
             response = await client.get("http://localhost:11434", timeout=5)
             if response.status_code == 200:
-              return Response(status_code=200)
+                return Response(status_code=200)
             else:
-              raise HTTPException(status_code=500, detail="Ollama server not healthy")
+                raise HTTPException(status_code=500, detail="Ollama server not healthy")
     except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise HTTPException(status_code=500, detail=f"Ollama server not reachable: {e}")
 
@@ -586,5 +588,21 @@ async def query_handler(request: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el procesamiento: {str(e)}")
 
+@app.on_event("startup")
+async def startup_event():
+    # Force LLM Load
+    print("Pre-loading Model...")
+    try:
+        llama3.invoke("hello")
+        print("Model pre-loaded.")
+    except Exception as e:
+        print(f"Error pre-loading the model: {e}")
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+   
+    # Start Uvicorn in a separate process
+    uvicorn_process = multiprocessing.Process(target=run_uvicorn)
+    uvicorn_process.start()
+    uvicorn_process.join()
+    
