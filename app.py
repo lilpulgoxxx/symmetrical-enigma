@@ -69,7 +69,7 @@ class QueryRequest(BaseModel):
     query: str
 
 local_llm = 'hf.co/MaziyarPanahi/Llama-3.2-3B-Instruct-uncensored-GGUF:IQ1_S'
-llama3 = ChatOllama(model=local_llm)
+llama3 = ChatOllama(model=local_llm, stream=True)
 
 wrapper = DuckDuckGoSearchAPIWrapper(max_results=1)
 web_search_tool = DuckDuckGoSearchRun(api_wrapper=wrapper)
@@ -504,9 +504,9 @@ async def generate_stream(state):
     context = state["context"]
 
     async def stream_response_generator():
-        generate_chain = generate_prompt | llama3 | StrOutputParser()
-        async for token in generate_chain.astream({"context": context, "question": question}):
-             yield token
+         generate_chain = generate_prompt | llama3 | StrOutputParser()
+         async for token in generate_chain.astream({"context": context, "question": question}):
+            yield token
 
     return StreamingResponse(stream_response_generator(), media_type="text/plain")
 
@@ -574,10 +574,11 @@ local_agent = workflow.compile()
 
 async def run_agent(query):
     output = await local_agent.ainvoke({"question": query})
+    
     if isinstance(output, StreamingResponse):
-         return output
-    elif "generation" not in output:
-        print("Web search failed, using Ollama model directly.")
+         return output #Return the generated streaming response
+    elif "generation" not in output: #If there's no websearch and generation, return direct response
+        
         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
             async for token in generate_chain.astream({"context": "", "question": query}):
@@ -585,23 +586,21 @@ async def run_agent(query):
         return StreamingResponse(stream_response_generator(), media_type="text/plain")
     
     
-    return {"generation": output}
+    return output.get('generation')
 
 @app.post("/query")
 async def query_handler(request: QueryRequest):
     try:
         query = request.query
         
-        result = await run_agent(query) # Directly call the agent
+        result = await run_agent(query)
         
-        if isinstance(result, StreamingResponse):
+        if isinstance(result, StreamingResponse): #Directly return the StreamingResponse
             return result
-        
-        if "generation" in result:
-          return result["generation"]
+
         else:
-          return JSONResponse(content={"error": "Unexpected response format"}, status_code=500)
-    
+            return result # Returns the `StreamingResponse`
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el procesamiento: {str(e)}")
 
