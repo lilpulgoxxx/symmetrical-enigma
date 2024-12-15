@@ -579,14 +579,13 @@ async def run_agent(query):
          return output #Return the generated streaming response
     elif "generation" not in output: #If there's no websearch and generation, return direct response
         
-        async def stream_response_generator():
+         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
             async for token in generate_chain.astream({"context": "", "question": query}):
                 yield token
-        return StreamingResponse(stream_response_generator(), media_type="text/plain")
+         return StreamingResponse(stream_response_generator(), media_type="text/plain")
     
-    
-    return output.get('generation')
+    return output
 
 @app.post("/query")
 async def query_handler(request: QueryRequest):
@@ -595,11 +594,12 @@ async def query_handler(request: QueryRequest):
         
         result = await run_agent(query)
         
-        if isinstance(result, StreamingResponse): #Directly return the StreamingResponse
-            return result
-
+        if isinstance(result, StreamingResponse):
+            return result  # Returns the streaming response directly
+        elif "generation" in result:
+             return JSONResponse(content={"generation": result["generation"]})
         else:
-            return result # Returns the `StreamingResponse`
+            return JSONResponse(content={"error": "Unexpected response format from agent."}, status_code=500)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el procesamiento: {str(e)}")
