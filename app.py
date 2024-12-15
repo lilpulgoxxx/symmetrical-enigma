@@ -586,15 +586,5 @@ async def query_handler(request: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el procesamiento: {str(e)}")
 
-@app.on_event("startup")
-async def startup_event():
-    # Force LLM Load
-    print("Pre-loading Model...")
-    try:
-        llama3.invoke("hello")
-        print("Model pre-loaded.")
-    except Exception as e:
-        print(f"Error pre-loading the model: {e}")
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=7860)
