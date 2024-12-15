@@ -20,38 +20,7 @@ import re
 import httpx
 
 
-
-async def start_ollama():
-    try:
-        print("Starting Ollama Server...")
-        process = await asyncio.create_subprocess_exec(
-            "ollama", "serve",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-
-        # Health check (try every 2 seconds for 2 minutes)
-        for _ in range(60):
-             await asyncio.sleep(2)
-             try:
-                async with httpx.AsyncClient() as client:
-                     response = await client.get("http://localhost:11434")
-                     if response.status_code == 200:
-                          print("Ollama Server is Ready.")
-                          return
-             except httpx.ConnectError:
-                 continue
-        
-        #If we get here, it means Ollama server was not able to start
-        stdout, stderr = await process.communicate()
-        if stderr:
-            print(f"Ollama server stderr: {stderr.decode()}")
-        raise Exception("Failed to start Ollama server within the timeout.")
-
-    except Exception as e:
-        print(f"Error starting Ollama server: {e}")
-        raise
-
+os.system("ollama serve &")
 
 def download_ollama_model(model_name='hf.co/MaziyarPanahi/Llama-3.2-3B-Instruct-uncensored-GGUF:IQ1_S'):
     try:
@@ -576,28 +545,28 @@ async def run_agent(query):
     output = await local_agent.ainvoke({"question": query})
     
     if isinstance(output, StreamingResponse):
-         return output #Return the generated streaming response
-    elif "generation" not in output: #If there's no websearch and generation, return direct response
-        
-         async def stream_response_generator():
+         return output
+    elif "generation" not in output:
+        print("Web search failed, using Ollama model directly.")
+        async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
             async for token in generate_chain.astream({"context": "", "question": query}):
                 yield token
-         return StreamingResponse(stream_response_generator(), media_type="text/plain")
+        return StreamingResponse(stream_response_generator(), media_type="text/plain")
     
     return output
+    
 
 @app.post("/query")
 async def query_handler(request: QueryRequest):
     try:
         query = request.query
-        
         result = await run_agent(query)
-        
+
         if isinstance(result, StreamingResponse):
-            return result  # Returns the streaming response directly
+            return result  # Return the streaming response directly
         elif "generation" in result:
-             return JSONResponse(content={"generation": result["generation"]})
+            return JSONResponse(content={"generation": result["generation"]})
         else:
             return JSONResponse(content={"error": "Unexpected response format from agent."}, status_code=500)
 
@@ -606,7 +575,6 @@ async def query_handler(request: QueryRequest):
 
 @app.on_event("startup")
 async def startup_event():
-    await start_ollama()
     # Force LLM Load
     print("Pre-loading Model...")
     try:
