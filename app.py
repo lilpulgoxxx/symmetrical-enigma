@@ -1,5 +1,6 @@
 import os
 import subprocess
+import asyncio
 from typing import Any, Dict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -14,11 +15,43 @@ from typing_extensions import TypedDict
 import multiprocessing
 from datetime import datetime
 import time
-from fastapi.responses import StreamingResponse
-import asyncio
+from fastapi.responses import StreamingResponse, JSONResponse
 import re
+import httpx
 
-os.system("ollama serve &")
+
+
+async def start_ollama():
+    try:
+        print("Starting Ollama Server...")
+        process = await asyncio.create_subprocess_exec(
+            "ollama", "serve",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Health check (try every 2 seconds for 2 minutes)
+        for _ in range(60):
+             await asyncio.sleep(2)
+             try:
+                async with httpx.AsyncClient() as client:
+                     response = await client.get("http://localhost:11434")
+                     if response.status_code == 200:
+                          print("Ollama Server is Ready.")
+                          return
+             except httpx.ConnectError:
+                 continue
+        
+        #If we get here, it means Ollama server was not able to start
+        stdout, stderr = await process.communicate()
+        if stderr:
+            print(f"Ollama server stderr: {stderr.decode()}")
+        raise Exception("Failed to start Ollama server within the timeout.")
+
+    except Exception as e:
+        print(f"Error starting Ollama server: {e}")
+        raise
+
 
 def download_ollama_model(model_name='hf.co/MaziyarPanahi/Llama-3.2-3B-Instruct-uncensored-GGUF:IQ1_S'):
     try:
@@ -40,6 +73,7 @@ llama3 = ChatOllama(model=local_llm)
 
 wrapper = DuckDuckGoSearchAPIWrapper(max_results=1)
 web_search_tool = DuckDuckGoSearchRun(api_wrapper=wrapper)
+
 
 global_data: Dict[str, Any] = {
     'models': {},
@@ -434,7 +468,7 @@ router_prompt = PromptTemplate(
         Otherwise, you can skip and go straight to the generation phase to respond.
         You do not need to be stringent with the keywords in the question related to these topics.
         Give a binary choice 'web_search' or 'generate' based on the question.
-        Return the JSON with a single key 'choice' with no premable or explanation.
+        Return the JSON with a single key 'choice' with no preamble or explanation.
         Question to route: {{question}}
         {global_data['tokensxx']['eot']}
         <|start_header_id|>assistant<|end_header_id|>""",
@@ -450,7 +484,7 @@ query_prompt = PromptTemplate(
         You are an expert at crafting web search queries for research questions.
         More often than not, a user will ask a basic question that they wish to learn more about, however it might not be in the best format.
         Reword their query to be the most effective web search string possible.
-        Return the JSON with a single key 'query' with no premable or explanation.
+        Return the JSON with a single key 'query' with no preamble or explanation.
         Question to transform: {{question}}
         {global_data['tokensxx']['eot']}
         <|start_header_id|>assistant<|end_header_id|>""",
@@ -501,8 +535,8 @@ async def web_search(state):
         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
             async for token in generate_chain.astream({"context": "", "question": state['question']}):
-              yield token
-
+                yield token
+        
         return {"context":  StreamingResponse(stream_response_generator(), media_type="text/plain")}
 
 
@@ -516,6 +550,9 @@ def route_question(state):
     elif output.get('choice') == 'generate':
         print("Step: Routing Query to Generation")
         return "generate"
+    
+    return "generate" # Default case
+
 
 workflow = StateGraph(GraphState)
 workflow.add_node("websearch", web_search)
@@ -535,36 +572,49 @@ workflow.add_edge("generate", END)
 
 local_agent = workflow.compile()
 
-async def run_agent_parallel(query):
+async def run_agent(query):
     output = await local_agent.ainvoke({"question": query})
     if isinstance(output, StreamingResponse):
          return output
     elif "generation" not in output:
         print("Web search failed, using Ollama model directly.")
-
         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
             async for token in generate_chain.astream({"context": "", "question": query}):
-              yield token
+                yield token
         return StreamingResponse(stream_response_generator(), media_type="text/plain")
-
-    return output.get("generation", "")
-
-
-async def process_query_in_parallel(query):
-     with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-         tasks = [run_agent_parallel(query) for _ in range(multiprocessing.cpu_count())]
-         results = await asyncio.gather(*tasks)
-     return results[0]
+    
+    
+    return {"generation": output}
 
 @app.post("/query")
 async def query_handler(request: QueryRequest):
     try:
         query = request.query
-        result = await process_query_in_parallel(query)
-        return result
+        
+        result = await run_agent(query) # Directly call the agent
+        
+        if isinstance(result, StreamingResponse):
+            return result
+        
+        if "generation" in result:
+          return result["generation"]
+        else:
+          return JSONResponse(content={"error": "Unexpected response format"}, status_code=500)
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el procesamiento: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    await start_ollama()
+    # Force LLM Load
+    print("Pre-loading Model...")
+    try:
+        llama3.invoke("hello")
+        print("Model pre-loaded.")
+    except Exception as e:
+        print(f"Error pre-loading the model: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=7860)
