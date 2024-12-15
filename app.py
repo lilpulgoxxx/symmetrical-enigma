@@ -2,7 +2,7 @@ import os
 import subprocess
 import asyncio
 from typing import Any, Dict
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 import uvicorn
 from langchain.prompts import PromptTemplate
@@ -18,7 +18,7 @@ import time
 from fastapi.responses import StreamingResponse, JSONResponse
 import re
 import httpx
-
+import socket
 
 os.system("ollama serve &")
 
@@ -545,7 +545,7 @@ async def run_agent(query):
     output = await local_agent.ainvoke({"question": query})
     
     if isinstance(output, StreamingResponse):
-         return output
+        return output
     elif "generation" not in output:
         print("Web search failed, using Ollama model directly.")
         async def stream_response_generator():
@@ -557,14 +557,27 @@ async def run_agent(query):
     return output
     
 
+@app.get("/health")
+async def health_check():
+    try:
+        # Check if the Ollama server is reachable
+        async with httpx.AsyncClient() as client:
+            response = await client.get("http://localhost:11434", timeout=5)
+            if response.status_code == 200:
+              return Response(status_code=200)
+            else:
+              raise HTTPException(status_code=500, detail="Ollama server not healthy")
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise HTTPException(status_code=500, detail=f"Ollama server not reachable: {e}")
+
 @app.post("/query")
 async def query_handler(request: QueryRequest):
     try:
         query = request.query
         result = await run_agent(query)
-
+        
         if isinstance(result, StreamingResponse):
-            return result  # Return the streaming response directly
+           return result
         elif "generation" in result:
             return JSONResponse(content={"generation": result["generation"]})
         else:
