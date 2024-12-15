@@ -471,15 +471,8 @@ async def generate_stream(state):
 
     async def stream_response_generator():
         generate_chain = generate_prompt | llama3 | StrOutputParser()
-        buffer = ""
         async for token in generate_chain.astream({"context": context, "question": question}):
-            buffer += token
-            sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', buffer)
-            if len(sentences) > 1:
-                for sentence in sentences[:-1]:
-                    yield sentence + " "
-                buffer = sentences[-1]
-        yield buffer
+             yield token
 
     return StreamingResponse(stream_response_generator(), media_type="text/plain")
 
@@ -507,15 +500,8 @@ async def web_search(state):
 
         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
-            buffer = ""
             async for token in generate_chain.astream({"context": "", "question": state['question']}):
-                buffer += token
-                sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', buffer)
-                if len(sentences) > 1:
-                     for sentence in sentences[:-1]:
-                         yield sentence + " "
-                     buffer = sentences[-1]
-            yield buffer
+              yield token
 
         return {"context":  StreamingResponse(stream_response_generator(), media_type="text/plain")}
 
@@ -558,15 +544,8 @@ async def run_agent_parallel(query):
 
         async def stream_response_generator():
             generate_chain = generate_prompt | llama3 | StrOutputParser()
-            buffer = ""
             async for token in generate_chain.astream({"context": "", "question": query}):
-              buffer += token
-              sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', buffer)
-              if len(sentences) > 1:
-                  for sentence in sentences[:-1]:
-                       yield sentence + " "
-                  buffer = sentences[-1]
-            yield buffer
+              yield token
         return StreamingResponse(stream_response_generator(), media_type="text/plain")
 
     return output.get("generation", "")
